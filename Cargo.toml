@@ -1,7 +1,13 @@
 [package]
 name = "toml_const_cli"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
+rust-version = "1.56"
+description = "Command line utility for toml_const"
+repository = "https://github.com/cruzerngz/toml_const_cli"
+license = "MIT"
+keywords = ["toml", "config"]
+categories = ["config"]
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
