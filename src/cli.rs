@@ -83,7 +83,6 @@ pub fn run() -> ExitCode {
         Some(t) => t,
         None => {
             log::error!("Cargo manifest does not have a package name. The manifest specified may be a workspace.");
-
             return ExitCode::FAILURE;
         }
     };
@@ -226,7 +225,7 @@ pub fn run() -> ExitCode {
     // add rules to root gitignore
     let mut config_dir = cargo_project_root.clone();
     config_dir.push(&args.config_path);
-    let mut generated_dir = PathBuf::from(args.manifest_path);
+    let mut generated_dir = PathBuf::from(&args.manifest_path);
     generated_dir.pop();
     generated_dir.push(&args.generated_file_path);
 
@@ -237,6 +236,18 @@ pub fn run() -> ExitCode {
             return ExitCode::FAILURE;
         }
     }
+
+    let cargo_toml_path = PathBuf::from(&args.manifest_path);
+    match update_cargo_manifest_build(&cargo_toml_path) {
+        Ok(_) => (),
+        Err(e) => {
+            log::error!("Unable to create/update manifest or build.rs: {}", e);
+            return ExitCode::FAILURE;
+        }
+    }
+
+    log::info!("Add 'build = \"build.rs\"' under 'dependencies' to {:?}", cargo_toml_path);
+    log::info!("Add 'toml_const = \"0\" under 'build-dependencies' in {:?}'", cargo_toml_path);
 
     ExitCode::SUCCESS
 }
@@ -369,7 +380,7 @@ fn update_gitignore_file(
     let generated_file_name = generated_file_path.file_name().unwrap();
 
     let generated_rules = format!(
-        "\n\n# added by {}\n{}\n",
+        "# added by {}\n{}\n",
         env!("CARGO_PKG_NAME"),
         generated_file_name.to_str().unwrap_or(""),
     );
@@ -407,6 +418,77 @@ fn update_gitignore_file(
         .unwrap();
 
     file.write(config_rules.as_bytes())
+        .map_err(|e| e.to_string())?;
+
+    Ok(())
+}
+
+/// Update the provided cargo manifest with a key to build.rs,
+/// as well as inserting a build.rs file if it doesn't exist.
+fn update_cargo_manifest_build(manifest_path: &PathBuf) -> Result<(), String> {
+    const BUILD_SCRIPT_CONTENTS: &'static str = "fn main() {
+    toml_const::run();\n\n\t// ... rest of your build script\n}\n";
+
+    let mut manifest_file = OpenOptions::new().read(true).open(manifest_path).unwrap();
+
+    let mut cargo_toml: toml::Table = {
+        let mut contents = String::new();
+        manifest_file
+            .read_to_string(&mut contents)
+            .map_err(|e| e.to_string())?;
+
+        toml::from_str(&contents).unwrap()
+    };
+
+    // println!("{:?}", cargo_toml);
+
+    // find the build.rs file. if it exists, do nothing.
+    // if it does not exist, update the key, create build.rs
+    // and populate with boilerplate.
+    let package_table = {
+        let val = cargo_toml.get_mut("package").unwrap();
+        if let Value::Table(t) = val {
+            t
+        } else {
+            return Err("Unable to find table \"package\" inside cargo manifest".to_string());
+        }
+    };
+
+    match package_table.get("build") {
+        Some(_) => return Ok(()),
+        None => {
+            package_table.insert("build".to_string(), Value::String("build.rs".to_string()));
+        }
+    }
+
+    // update cargo.toml
+    // this really messes up the existing order of the file
+    // let mut manifest_file = OpenOptions::new()
+    //     .write(true)
+    //     .truncate(true)
+    //     .open(manifest_path)
+    //     .unwrap();
+    // manifest_file
+    //     .write(
+    //         toml::to_string_pretty(&cargo_toml)
+    //             .map_err(|e| e.to_string())?
+    //             .as_bytes(),
+    //     )
+    //     .map_err(|e| e.to_string())?;
+
+    // create build.rs
+    let mut build_script_path = manifest_path.clone();
+    build_script_path.pop();
+    build_script_path.push("build.rs");
+
+    let mut build_script = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .open(&build_script_path)
+        .unwrap();
+
+    build_script
+        .write(BUILD_SCRIPT_CONTENTS.as_bytes())
         .map_err(|e| e.to_string())?;
 
     Ok(())
